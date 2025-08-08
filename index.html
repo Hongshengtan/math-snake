@@ -1,0 +1,344 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>数学贪吃蛇：指数与对数（在线版）</title>
+<meta name="description" content="用方向键玩贪吃蛇，边玩边复习指数与对数。题目涵盖正指数、负指数、分数指数与对数。按空格开始/暂停。">
+<style>
+  :root{--bg:#0b1020;--panel:#101935;--border:#3a4b8a;--pill:#1e2b54;--accent:#3a6df0;--grid:#ffffff0d;
+        --snakeHead:#58ffb1;--snake:#2ee59d;--orb:#ffd166;--text:#e9ecf1;}
+  *{box-sizing:border-box}
+  body { background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+         margin:0; display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+  h1 { font-weight:800; margin:16px 0 8px; text-align:center; }
+  #wrap { position: relative; }
+  #game { background:var(--panel); border:2px solid var(--border); box-shadow: 0 0 20px rgba(0,0,0,.35); display:block; }
+  #hud { width:min(94vw, 640px); display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; margin:8px 0 16px; font-size:16px;}
+  .pill { background:var(--pill); padding:6px 10px; border-radius:999px; }
+  #msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+         background:rgba(0,0,0,.55); color:#fff; font-size:18px; text-align:center; padding:16px; }
+  #msg.hidden { display:none; }
+  button { background:var(--accent); color:#fff; border:none; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:700; }
+  button:hover { filter:brightness(1.08); }
+  #legend { width:min(94vw, 640px); font-size:14px; line-height:1.65; color:#cfd7ff; margin:10px 0 12px;text-align:left;}
+  code { background:#17213f; padding:2px 6px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+  kbd { background:#222; border:1px solid #444; border-bottom-width:3px; padding:1px 6px; border-radius:6px;}
+  .footer{opacity:.7; font-size:12px; margin:10px 0 30px;}
+  @media (max-width:660px){
+    #game{ width:94vw; height:94vw; }
+    #hud{ width:94vw; }
+  }
+</style>
+</head>
+<body>
+  <h1>🐍 数学贪吃蛇：指数与对数（在线版）</h1>
+  <div id="legend">
+    玩法：按 <kbd>空格</kbd> 开始/暂停，使用方向键移动。屏幕上方显示题目，地图上有 4 个“答案球”。<br/>
+    吃到正确答案 ➜ 加分并变长；吃错 ➜ 游戏结束。题目范围：正指数、负指数、分数指数（如 <code>a^{1/2}</code>、<code>8^{2/3}</code>）、对数 <code>log_a(x)</code>。<br/>
+    小技巧：<b>负指数=倒数</b>；<b>分母=开几次方，分子=再乘几次</b>；<b>log_a(x)</b> 问的是 “a 的几次方等于 x”。
+  </div>
+  <div id="hud">
+    <div class="pill">分数：<span id="score">0</span></div>
+    <div class="pill">速度：<span id="speed">中等</span></div>
+    <div class="pill">当前题：<span id="qtext">按空格开始</span></div>
+  </div>
+  <div id="wrap" style="width:min(94vw,640px);height:min(94vw,640px);">
+    <canvas id="game" width="600" height="600"></canvas>
+    <div id="msg" aria-live="polite">
+      <div>
+        <div style="font-size:22px; font-weight:800; margin-bottom:10px;">按 <kbd>空格</kbd> 开始 / 暂停</div>
+        <div style="opacity:.95">方向键移动。吃对答案变长，吃错就 GG。<br/>再次按空格可暂停，重新开始请点下面按钮。</div>
+        <div style="margin-top:16px;"><button id="restartBtn">重新开始</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">© 学习用途。可自由分享此页面文件。</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('wrap');
+
+  // 自适应正方形画布（移动端）
+  function fitCanvas(){
+    const size = Math.min(wrap.clientWidth, wrap.clientHeight);
+    canvas.width = size;
+    canvas.height = size;
+  }
+  window.addEventListener('resize', fitCanvas);
+  fitCanvas();
+
+  const W = () => canvas.width, H = () => canvas.height;
+  const GRID = 20; // 基础格单位，用像素换算至网格数量
+  const COLS = () => Math.floor(W()/GRID);
+  const ROWS = () => Math.floor(H()/GRID);
+  const scoreEl = document.getElementById('score');
+  const qtextEl = document.getElementById('qtext');
+  const speedEl = document.getElementById('speed');
+  const msg = document.getElementById('msg');
+  const restartBtn = document.getElementById('restartBtn');
+
+  let running = false;
+  let lastTick = 0;
+  let tickMs = 140; // 速度
+  let snake, dir, nextDir, score, answers, correctKey, questionText;
+
+  function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+  function randCell(){
+    return {x: randInt(0, COLS()-1), y: randInt(0, ROWS()-1)};
+  }
+  function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
+
+  function init(){
+    snake = [{x:10,y:15},{x:9,y:15},{x:8,y:15}];
+    dir = {x:1,y:0}; nextDir = {x:1,y:0};
+    score = 0;
+    tickMs = 140;
+    speedEl.textContent = "中等";
+    newQuestion();
+    updateHud();
+  }
+
+  function updateHud(){
+    scoreEl.textContent = score;
+    qtextEl.textContent = questionText || "……";
+  }
+
+  // ---- 出题器 ----
+  function formatFrac(numer, denom){
+    if(denom===1) return String(numer);
+    return (numer<0?"-":"") + Math.abs(numer) + "/" + denom;
+  }
+
+  function simplifyFraction(n, d){
+    function g(a,b){ return b?g(b,a%b):Math.abs(a); }
+    const g0 = g(n,d);
+    return [n/g0, d/g0];
+  }
+
+  function asStr(x){
+    if (typeof x === "number"){
+      if (Math.abs(x-Math.round(x))<1e-9) return String(Math.round(x));
+      return String(x.toFixed(3)).replace(/0+$/,'').replace(/\.$/,''); 
+    }
+    if (x && x.frac){
+      const [n,d] = simplifyFraction(x.frac[0], x.frac[1]);
+      return formatFrac(n,d);
+    }
+    return String(x);
+  }
+
+  function q_pow_integer(){
+    const a = [2,3,4,5,6,7,8,9][randInt(0,7)];
+    const n = randInt(1,5);
+    const val = Math.pow(a,n);
+    return { text: `${a}^${n} = ?`, correct: asStr(val), topic:"powInt" };
+  }
+
+  function q_pow_negative(){
+    const a = [2,3,4,5,6,9][randInt(0,5)];
+    const n = randInt(1,3);
+    return { text: `${a}^(-${n}) = ?`, correct: asStr({frac:[1, Math.pow(a,n)]}), topic:"powNeg" };
+  }
+
+  function q_pow_fraction_simple(){
+    const choices = [{a:4, r:2},{a:9, r:3},{a:16,r:4},{a:25,r:5}];
+    const pick = choices[randInt(0, choices.length-1)];
+    return { text: `${pick.a}^{1/2} = ?`, correct: asStr(pick.r), topic:"powFrac12" };
+  }
+
+  function q_pow_fraction_23(){
+    const items = [{a:8, num:2, den:3, r:4},{a:27,num:1,den:3,r:3},{a:32,num:1,den:5,r:2},{a:81,num:1,den:4,r:3}];
+    const t = items[randInt(0, items.length-1)];
+    return { text: `${t.a}^{${t.num}/${t.den}} = ?`, correct: asStr(t.r), topic:"powFrac" };
+  }
+
+  function q_log_integer(){
+    const a = [2,3,4,5,10][randInt(0,4)];
+    const k = randInt(-3,4);
+    const x = Math.pow(a,k);
+    return { text: `log_${a}(${x}) = ?`, correct: asStr(k), topic:"logInt" };
+  }
+
+  function q_mix(){
+    const bank = [q_pow_integer, q_pow_negative, q_pow_fraction_simple, q_pow_fraction_23, q_log_integer];
+    return bank[randInt(0, bank.length-1)]();
+  }
+
+  function genDistractors(correctStr){
+    const res = new Set();
+    res.add(correctStr);
+    function tweak(str){
+      if (/^-?\d+\/\d+$/.test(str)){
+        const [n,d] = str.split('/').map(s=>parseInt(s,10));
+        const pick = randInt(0,2);
+        if (pick===0) return asStr({frac:[d,n]});
+        if (pick===1) return asStr({frac:[n+1, d]});
+        return asStr({frac:[n-1, d]});
+      } else if (/^-?\d+(\.\d+)?$/.test(str)){
+        const v = parseFloat(str);
+        const pick = randInt(0,3);
+        if (pick===0) return asStr(v+1);
+        if (pick===1) return asStr(v-1);
+        if (pick===2 && v!==0) return asStr({frac:[1, Math.max(1,Math.round(Math.abs(v)))]});
+        return asStr(v*2);
+      } else { return str + "'"; }
+    }
+    let guard = 0;
+    while(res.size<4 && guard<60){ res.add(tweak(correctStr)); guard++; }
+    const arr = Array.from(res);
+    return shuffle(arr).slice(0,4);
+  }
+
+  function shuffle(a){
+    for(let i=a.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function newQuestion(){
+    const q = q_mix();
+    questionText = q.text;
+    const opts = genDistractors(q.correct);
+    if (!opts.includes(q.correct)) { opts[randInt(0,3)] = q.correct; }
+    placeAnswers(opts, q.correct);
+    updateHud();
+  }
+
+  function placeAnswers(opts, correct){
+    // 随机放置 4 个答案球，避开蛇身
+    answers = [];
+    for (let i=0;i<4;i++){
+      let c;
+      let tries=0;
+      do { c = randCell(); tries++; if(tries>200) break; }
+      while ( snake.some(s=>cellEq(s,c)) || answers.some(o=>cellEq(o.pos,c)) );
+      answers.push({ pos:c, text:opts[i] });
+    }
+    correctKey = correct;
+  }
+
+  // ---- 输入 ----
+  window.addEventListener('keydown', e=>{
+    if (e.code === 'Space'){
+      running = !running;
+      msg.classList.toggle('hidden', running);
+      return;
+    }
+    if (!running) return;
+    if (e.key === 'ArrowUp' && dir.y!==1){ nextDir={x:0,y:-1}; }
+    else if (e.key === 'ArrowDown' && dir.y!==-1){ nextDir={x:0,y:1}; }
+    else if (e.key === 'ArrowLeft' && dir.x!==1){ nextDir={x:-1,y:0}; }
+    else if (e.key === 'ArrowRight' && dir.x!==-1){ nextDir={x:1,y:0}; }
+  });
+
+  restartBtn.addEventListener('click', ()=>{
+    init();
+    running = false;
+    msg.classList.remove('hidden');
+  });
+
+  // ---- 循环 ----
+  function loop(ts){
+    requestAnimationFrame(loop);
+    if (!running) return;
+    if (ts - lastTick < tickMs) return;
+    lastTick = ts;
+    step();
+    draw();
+  }
+
+  function step(){
+    dir = nextDir;
+    const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+    // 边缘穿越，降低难度
+    head.x = (head.x + COLS()) % COLS();
+    head.y = (head.y + ROWS()) % ROWS();
+
+    // 撞到自己 => 结束
+    if (snake.some(s=>cellEq(s, head))){
+      gameOver("撞到自己啦！");
+      return;
+    }
+    snake.unshift(head);
+
+    // 吃答案
+    let ate = false;
+    for (let i=0;i<answers.length;i++){
+      if (cellEq(answers[i].pos, head)){
+        const picked = answers[i].text;
+        if (picked === correctKey){
+          score++;
+          if (score % 5 === 0 && tickMs>70){ tickMs -= 10; speedEl.textContent = tickMs<=90 ? "很快" : "中等"; }
+          newQuestion();
+          ate = true; // 变长
+        } else {
+          gameOver("吃错答案了！");
+          return;
+        }
+      }
+    }
+    if (!ate){ snake.pop(); } // 没吃到就移动尾巴
+  }
+
+  function gameOver(reason){
+    running = false;
+    draw();
+    msg.classList.remove('hidden');
+    msg.querySelector('div').firstChild.textContent = "游戏结束：" + reason + " 分数：" + score + "。按空格继续或点重新开始。";
+  }
+
+  function draw(){
+    const w = W(), h = H();
+    // 背景
+    ctx.fillStyle = "#0f1733";
+    ctx.fillRect(0,0,w,h);
+    // 网格
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 1;
+    for (let x=0;x<=w;x+=GRID){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+    for (let y=0;y<=h;y+=GRID){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+    // 蛇
+    for (let i=0;i<snake.length;i++){
+      ctx.fillStyle = i===0 ? "#58ffb1" : "#2ee59d";
+      const s = snake[i];
+      ctx.fillRect(s.x*GRID+1, s.y*GRID+1, GRID-2, GRID-2);
+    }
+
+    // 答案球
+    for (const a of answers){
+      ctx.beginPath();
+      ctx.fillStyle = "#ffd166";
+      const cx = a.pos.x*GRID + GRID/2;
+      const cy = a.pos.y*GRID + GRID/2;
+      ctx.arc(cx, cy, GRID*0.38, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = "#102a43";
+      ctx.font = "bold " + Math.floor(GRID*0.7) + "px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(a.text, cx, cy);
+    }
+
+    // 顶部题目条
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0,0,w,Math.max(34, GRID*1.7));
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold " + Math.floor(GRID*0.9) + "px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("题目： " + questionText, 10, Math.max(17, GRID*0.85));
+  }
+
+  init();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
